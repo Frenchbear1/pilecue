@@ -128,6 +128,7 @@ function WorkerApp() {
   const upsertJobLocal = usePileCueStore((state) => state.upsertJobLocal)
   const removeJobLocal = usePileCueStore((state) => state.removeJobLocal)
   const upsertItemLocal = usePileCueStore((state) => state.upsertItemLocal)
+  const removeItemLocal = usePileCueStore((state) => state.removeItemLocal)
   const upsertActivityLocal = usePileCueStore((state) => state.upsertActivityLocal)
   const setSyncState = usePileCueStore((state) => state.setSyncState)
   const resetJob = usePileCueStore((state) => state.resetJob)
@@ -138,7 +139,6 @@ function WorkerApp() {
   const [isCreatingJob, setIsCreatingJob] = useState(false)
   const [jobCreateError, setJobCreateError] = useState('')
   const [shareOpen, setShareOpen] = useState(false)
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({})
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? null,
@@ -368,6 +368,30 @@ function WorkerApp() {
     }
   }
 
+  const deleteItem = async (item: PileCueItem) => {
+    if (!selectedJob) {
+      return
+    }
+
+    const confirmed = window.confirm('Delete this photo from the job?')
+
+    if (!confirmed) {
+      return
+    }
+
+    removeItemLocal(item.id)
+
+    try {
+      await repository.deleteItem(selectedJob.clientToken, item)
+    } catch (deleteError) {
+      upsertItemLocal(item)
+      setSyncState(
+        'error',
+        deleteError instanceof Error ? deleteError.message : 'Could not delete photo.',
+      )
+    }
+  }
+
   const markAlertsRead = async () => {
     if (!selectedJob || unreadAlerts.length === 0) {
       return
@@ -443,8 +467,8 @@ function WorkerApp() {
               onViewChange={setView}
               onUpload={uploadPhotos}
               onShare={() => setShareOpen(true)}
-              onToggleNotifications={() => setNotificationsOpen(true)}
               onToggleHandled={(item) => void toggleHandled(item)}
+              onDeleteItem={(item) => void deleteItem(item)}
               onMarkAlertsRead={() => void markAlertsRead()}
             />
           )}
@@ -460,13 +484,6 @@ function WorkerApp() {
           open={shareOpen}
           job={activeJob ?? selectedJob}
           onClose={() => setShareOpen(false)}
-        />
-        <NotificationDrawer
-          open={notificationsOpen}
-          activity={activity}
-          items={items}
-          onClose={() => setNotificationsOpen(false)}
-          onMarkRead={() => void markAlertsRead()}
         />
       </div>
     </MotionConfig>
@@ -486,9 +503,13 @@ function ClientApp({ clientToken }: { clientToken: string }) {
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const job = snapshot.job as PublicClientJob | null
   const items = snapshot.items
+  const clientPhotoItems = useMemo(() => getClientPhotoItems(items), [items])
   const selectedItem = useMemo(
-    () => items.find((item) => item.id === selectedItemId) ?? items[0] ?? null,
-    [items, selectedItemId],
+    () =>
+      items.find((item) => item.id === selectedItemId) ??
+      clientPhotoItems[0] ??
+      null,
+    [clientPhotoItems, items, selectedItemId],
   )
   const groups = useMemo(() => groupItemsByCategory(items), [items])
 
@@ -513,10 +534,10 @@ function ClientApp({ clientToken }: { clientToken: string }) {
   }, [clientToken, repository])
 
   useEffect(() => {
-    if (!selectedItemId && items[0]) {
-      setSelectedItemId(items[0].id)
+    if (!selectedItemId && clientPhotoItems[0]) {
+      setSelectedItemId(clientPhotoItems[0].id)
     }
-  }, [items, selectedItemId])
+  }, [clientPhotoItems, selectedItemId])
 
   useEffect(() => {
     if (!selectedItem) {
@@ -615,7 +636,7 @@ function ClientApp({ clientToken }: { clientToken: string }) {
               />
             </div>
           </header>
-          <div className="grid gap-5 px-5 pb-[calc(env(safe-area-inset-bottom)+8.5rem)] pt-5 lg:grid-cols-[1.1fr_0.9fr] lg:px-8 lg:pb-8">
+          <div className="grid gap-5 px-5 pb-[calc(env(safe-area-inset-bottom)+12rem)] pt-5 lg:grid-cols-[1.1fr_0.9fr] lg:px-8 lg:pb-[calc(env(safe-area-inset-bottom)+14rem)] xl:pb-8">
             <section className="min-w-0">
               {selectedItem ? (
                 <ClientReviewCard
@@ -646,28 +667,45 @@ function ClientApp({ clientToken }: { clientToken: string }) {
                   </span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
-                  {items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        saveSelectedNote()
-                        setSelectedItemId(item.id)
-                      }}
-                      className={clsx(
-                        'pressable aspect-square overflow-hidden rounded-2xl border-2 bg-stone-100',
-                        selectedItem?.id === item.id
-                          ? 'border-[var(--accent)]'
-                          : 'border-transparent',
-                      )}
-                    >
-                      <img
-                        src={item.thumbnailUrl}
-                        alt=""
-                        className="size-full object-cover"
-                      />
-                    </button>
-                  ))}
+                  {clientPhotoItems.map((item) => {
+                    const isSorted = isItemClientSorted(item)
+                    const Icon = categoryIcons[item.category]
+
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          saveSelectedNote()
+                          setSelectedItemId(item.id)
+                        }}
+                        className={clsx(
+                          'pressable relative aspect-square overflow-hidden rounded-2xl border-2 bg-stone-100',
+                          selectedItem?.id === item.id
+                            ? 'border-[var(--accent)]'
+                            : 'border-transparent',
+                        )}
+                      >
+                        <img
+                          src={item.thumbnailUrl}
+                          alt=""
+                          className={clsx(
+                            'size-full object-cover transition',
+                            isSorted ? 'opacity-45' : '',
+                          )}
+                        />
+                        {isSorted ? (
+                          <span
+                            className="absolute inset-x-2 top-1/2 flex -translate-y-1/2 items-center justify-center gap-1 rounded-full px-2 py-1 text-[11px] font-bold text-white shadow-sm"
+                            style={{ backgroundColor: categoryColors[item.category] }}
+                          >
+                            <Icon size={12} />
+                            {categoryLabels[item.category]}
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
                 </div>
               </section>
               <SortedGroups groups={groups} onSelect={setSelectedItemId} />
@@ -812,8 +850,8 @@ function JobWorkspace({
   onViewChange,
   onUpload,
   onShare,
-  onToggleNotifications,
   onToggleHandled,
+  onDeleteItem,
   onMarkAlertsRead,
 }: {
   job: PileCueJob
@@ -826,8 +864,8 @@ function JobWorkspace({
   onViewChange: (view: WorkerView) => void
   onUpload: (files: FileList | null) => void
   onShare: () => void
-  onToggleNotifications: () => void
   onToggleHandled: (item: PileCueItem) => void
+  onDeleteItem: (item: PileCueItem) => void
   onMarkAlertsRead: () => void
 }) {
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
@@ -855,20 +893,12 @@ function JobWorkspace({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onToggleNotifications}
-              title="Notifications"
-              className="pressable relative grid size-11 place-items-center rounded-full border border-stone-200 bg-white text-stone-700 shadow-sm"
+              onClick={onShare}
+              className="pressable flex h-11 items-center gap-2 rounded-full bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 shadow-sm ring-1 ring-emerald-100"
             >
-              <Bell size={20} />
-              {unreadCount ? (
-                <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
-                  {unreadCount}
-                </span>
-              ) : null}
+              <Share2 size={18} />
+              Share
             </button>
-            <IconButton title="Share" onClick={onShare}>
-              <Share2 size={20} />
-            </IconButton>
           </div>
         </div>
       </header>
@@ -882,13 +912,22 @@ function JobWorkspace({
                 onCapture={() => cameraInputRef.current?.click()}
                 onUpload={() => uploadInputRef.current?.click()}
                 onToggleHandled={onToggleHandled}
+                onDeleteItem={onDeleteItem}
               />
             ) : null}
             {view === 'review' ? (
-              <ReviewView groups={groups} onToggleHandled={onToggleHandled} />
+              <ReviewView
+                groups={groups}
+                onToggleHandled={onToggleHandled}
+                onDeleteItem={onDeleteItem}
+              />
             ) : null}
             {view === 'checked' ? (
-              <CheckedView items={checkedItems} onToggleHandled={onToggleHandled} />
+              <CheckedView
+                items={checkedItems}
+                onToggleHandled={onToggleHandled}
+                onDeleteItem={onDeleteItem}
+              />
             ) : null}
             {view === 'notifications' ? (
               <NotificationsView
@@ -933,12 +972,14 @@ function CaptureView({
   onCapture,
   onUpload,
   onToggleHandled,
+  onDeleteItem,
 }: {
   items: PileCueItem[]
   uploadProgress: Record<string, number>
   onCapture: () => void
   onUpload: () => void
   onToggleHandled: (item: PileCueItem) => void
+  onDeleteItem: (item: PileCueItem) => void
 }) {
   return (
     <div className="space-y-5">
@@ -973,7 +1014,9 @@ function CaptureView({
         <ItemGrid
           items={items}
           uploadProgress={uploadProgress}
+          columns="capture"
           onToggleHandled={onToggleHandled}
+          onDeleteItem={onDeleteItem}
         />
       ) : (
         <EmptyState
@@ -989,9 +1032,11 @@ function CaptureView({
 function ReviewView({
   groups,
   onToggleHandled,
+  onDeleteItem,
 }: {
   groups: Record<SortCategory, PileCueItem[]>
   onToggleHandled: (item: PileCueItem) => void
+  onDeleteItem: (item: PileCueItem) => void
 }) {
   return (
     <div className="space-y-4">
@@ -1018,7 +1063,12 @@ function ReviewView({
               </div>
             </div>
             {categoryItems.length ? (
-              <ItemGrid items={categoryItems} onToggleHandled={onToggleHandled} compact />
+              <ItemGrid
+                items={categoryItems}
+                onToggleHandled={onToggleHandled}
+                onDeleteItem={onDeleteItem}
+                compact
+              />
             ) : (
               <div className="rounded-2xl bg-stone-100 px-4 py-5 text-sm font-medium text-stone-500">
                 Empty
@@ -1034,12 +1084,18 @@ function ReviewView({
 function CheckedView({
   items,
   onToggleHandled,
+  onDeleteItem,
 }: {
   items: PileCueItem[]
   onToggleHandled: (item: PileCueItem) => void
+  onDeleteItem: (item: PileCueItem) => void
 }) {
   return items.length ? (
-    <ItemGrid items={items} onToggleHandled={onToggleHandled} />
+    <ItemGrid
+      items={items}
+      onToggleHandled={onToggleHandled}
+      onDeleteItem={onDeleteItem}
+    />
   ) : (
     <EmptyState
       Icon={CheckCircle2}
@@ -1083,19 +1139,27 @@ function NotificationsView({
 function ItemGrid({
   items,
   uploadProgress = {},
+  columns = 'default',
   compact = false,
   onToggleHandled,
+  onDeleteItem,
 }: {
   items: PileCueItem[]
   uploadProgress?: Record<string, number>
+  columns?: 'default' | 'capture'
   compact?: boolean
   onToggleHandled: (item: PileCueItem) => void
+  onDeleteItem: (item: PileCueItem) => void
 }) {
   return (
     <div
       className={clsx(
         'grid gap-3',
-        compact ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+        columns === 'capture'
+          ? 'grid-cols-2'
+          : compact
+            ? 'grid-cols-2 sm:grid-cols-3'
+            : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
       )}
     >
       {items.map((item) => (
@@ -1104,6 +1168,7 @@ function ItemGrid({
           item={item}
           progress={uploadProgress[item.id]}
           onToggleHandled={() => onToggleHandled(item)}
+          onDelete={() => onDeleteItem(item)}
         />
       ))}
     </div>
@@ -1114,23 +1179,36 @@ function ItemCard({
   item,
   progress,
   onToggleHandled,
+  onDelete,
 }: {
   item: PileCueItem
   progress?: number
   onToggleHandled: () => void
+  onDelete: () => void
 }) {
-  const Icon = categoryIcons[item.category]
   const handled = Boolean(item.handledAt)
+  const statusLabel =
+    handled && !item.needsWorkerReview
+      ? 'Checked'
+      : item.needsWorkerReview
+        ? 'Recheck'
+        : 'Unchecked'
 
   return (
     <article
       className={clsx(
-        'overflow-hidden rounded-[28px] border bg-white shadow-sm',
+        'overflow-hidden rounded-[24px] border bg-white shadow-sm',
         item.needsWorkerReview ? 'border-red-200' : 'border-white',
       )}
     >
-      <div className="relative aspect-[4/3] bg-stone-100">
+      <div className="relative aspect-[4/3] overflow-hidden bg-stone-100">
         <img src={item.thumbnailUrl} alt="" className="size-full object-cover" />
+        <button
+          type="button"
+          onClick={onToggleHandled}
+          className="pressable absolute inset-0 z-10"
+          aria-label={handled ? 'Uncheck photo' : 'Check photo'}
+        />
         <div className="absolute left-3 top-3 flex flex-wrap gap-2">
           <CategoryPill category={item.category} />
           {item.needsWorkerReview ? (
@@ -1139,42 +1217,35 @@ function ItemCard({
             </span>
           ) : null}
         </div>
+        <button
+          type="button"
+          title="Delete photo"
+          onClick={onDelete}
+          className="pressable absolute right-3 top-3 z-20 grid size-9 place-items-center rounded-full bg-white/90 text-red-700 shadow-sm backdrop-blur"
+        >
+          <Trash2 size={16} />
+        </button>
+        <span
+          className={clsx(
+            'absolute inset-x-3 bottom-3 flex items-center justify-center gap-2 rounded-full px-3 py-2 text-xs font-bold shadow-sm backdrop-blur',
+            handled && !item.needsWorkerReview
+              ? 'bg-emerald-600/90 text-white'
+              : item.needsWorkerReview
+                ? 'bg-red-600/90 text-white'
+                : 'bg-white/85 text-stone-700',
+          )}
+        >
+          {handled && !item.needsWorkerReview ? <CheckCircle2 size={14} /> : null}
+          {statusLabel}
+        </span>
         {progress !== undefined ? (
-          <div className="absolute inset-x-3 bottom-3 overflow-hidden rounded-full bg-white/80 p-1 backdrop-blur">
+          <div className="absolute inset-x-3 bottom-3 z-30 overflow-hidden rounded-full bg-white/80 p-1 backdrop-blur">
             <div
               className="h-2 rounded-full bg-[var(--accent)] transition-all"
               style={{ width: `${Math.max(8, progress)}%` }}
             />
           </div>
         ) : null}
-      </div>
-      <div className="space-y-3 p-4">
-        {item.clientNote ? (
-          <p className="line-clamp-2 text-sm leading-5 text-stone-600">
-            {item.clientNote}
-          </p>
-        ) : (
-          <p className="text-sm text-stone-400">No note</p>
-        )}
-        <button
-          type="button"
-          onClick={onToggleHandled}
-          className={clsx(
-            'pressable flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold',
-            handled && !item.needsWorkerReview
-              ? 'bg-emerald-50 text-emerald-700'
-              : item.needsWorkerReview
-                ? 'bg-red-50 text-red-700'
-                : 'bg-stone-100 text-stone-700',
-          )}
-        >
-          {handled && !item.needsWorkerReview ? <CheckCircle2 size={17} /> : <Icon size={17} />}
-          {handled && !item.needsWorkerReview
-            ? 'Checked'
-            : item.needsWorkerReview
-              ? 'Recheck'
-              : 'Check off'}
-        </button>
       </div>
     </article>
   )
@@ -1289,7 +1360,7 @@ function ClientCategoryDock({
 }) {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
-      <div className="mx-auto grid max-w-[680px] grid-cols-6 gap-2 rounded-[30px] border border-white/80 bg-white/90 p-2 shadow-2xl backdrop-blur-xl">
+      <div className="mx-auto grid max-w-[720px] grid-cols-6 gap-2 rounded-[30px] border border-white/80 bg-white/90 p-2 shadow-2xl backdrop-blur-xl">
         {sortCategories.map((category) => {
           const Icon = categoryIcons[category]
           const selected = current === category
@@ -1301,13 +1372,15 @@ function ClientCategoryDock({
               onClick={() => onChange(category)}
               title={categoryLabels[category]}
               className={clsx(
-                'pressable grid aspect-square min-h-12 place-items-center rounded-[22px] text-white shadow-sm',
+                'pressable flex min-h-16 flex-col items-center justify-center gap-1 rounded-[22px] px-1 text-white shadow-sm',
                 selected ? 'ring-4 ring-stone-950/10' : '',
               )}
               style={{ backgroundColor: categoryColors[category] }}
             >
               <Icon size={21} />
-              <span className="sr-only">{categoryLabels[category]}</span>
+              <span className="max-w-full truncate text-[10px] font-bold leading-none">
+                {categoryLabels[category]}
+              </span>
             </button>
           )
         })}
@@ -1980,6 +2053,30 @@ function PageFrame({ children }: { children: ReactNode }) {
       {children}
     </motion.section>
   )
+}
+
+function isItemClientSorted(item: PileCueItem) {
+  return Boolean(item.lastClientChangeAt) || item.category !== 'unsure'
+}
+
+function getClientPhotoItems(items: PileCueItem[]) {
+  return [...items].sort((a, b) => {
+    const aSorted = isItemClientSorted(a)
+    const bSorted = isItemClientSorted(b)
+
+    if (aSorted !== bSorted) {
+      return aSorted ? 1 : -1
+    }
+
+    if (aSorted && bSorted) {
+      return (
+        new Date(a.lastClientChangeAt ?? a.updatedAt).getTime() -
+        new Date(b.lastClientChangeAt ?? b.updatedAt).getTime()
+      )
+    }
+
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  })
 }
 
 function formatDate(value: string) {

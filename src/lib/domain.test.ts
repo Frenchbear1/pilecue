@@ -39,6 +39,18 @@ describe('PileCue domain', () => {
     expect(result.activity).toBeNull()
   })
 
+  it('marks an item reviewed when the client taps the current category', () => {
+    const result = applyClientItemChange(
+      baseItem,
+      { category: 'unsure' },
+      '2026-01-01T00:03:00.000Z',
+    )
+
+    expect(result.item.category).toBe('unsure')
+    expect(result.item.lastClientChangeAt).toBe('2026-01-01T00:03:00.000Z')
+    expect(result.activity).toBeNull()
+  })
+
   it('creates a notification when a handled item is changed by the client', () => {
     const handled = markItemHandled(
       baseItem,

@@ -120,12 +120,13 @@ export function applyClientItemChange(
   const nextCategory = patch.category ?? item.category
   const categoryChanged = nextCategory !== item.category
   const noteChanged = nextNote !== item.clientNote
+  const categoryReviewed = patch.category !== undefined
 
-  if (!categoryChanged && !noteChanged) {
+  if (!categoryReviewed && !categoryChanged && !noteChanged) {
     return { item, activity: null as PileCueActivity | null }
   }
 
-  const changedAfterHandled = Boolean(item.handledAt)
+  const changedAfterHandled = Boolean(item.handledAt) && (categoryChanged || noteChanged)
   const changedLabels = [
     categoryChanged ? 'category' : '',
     noteChanged ? 'note' : '',

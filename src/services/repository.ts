@@ -54,6 +54,7 @@ export type PileCueRepository = {
   saveJob: (job: PileCueJob) => Promise<void>
   deleteJob: (job: PileCueJob) => Promise<void>
   saveItem: (clientToken: string, item: PileCueItem) => Promise<void>
+  deleteItem: (clientToken: string, item: PileCueItem) => Promise<void>
   saveActivity: (clientToken: string, activity: PileCueActivity) => Promise<void>
   saveActivities: (clientToken: string, activity: PileCueActivity[]) => Promise<void>
   markActivityRead: (
@@ -290,6 +291,26 @@ class FirestorePileCueRepository implements PileCueRepository {
     await setDoc(doc(this.db, `clientJobs/${clientToken}/items/${item.id}`), item)
   }
 
+  async deleteItem(clientToken: string, item: PileCueItem) {
+    const activitySnapshot = await getDocs(
+      query(
+        collection(this.db, `clientJobs/${clientToken}/activity`),
+        where('itemId', '==', item.id),
+      ),
+    )
+
+    await Promise.all([
+      deleteDoc(doc(this.db, `clientJobs/${clientToken}/items/${item.id}`)),
+      ...activitySnapshot.docs.map((entry) => deleteDoc(entry.ref)),
+      ...(item.storagePath
+        ? [
+            deleteStorageObject(this.storage, `${item.storagePath}.jpg`),
+            deleteStorageObject(this.storage, `${item.storagePath}_thumb.jpg`),
+          ]
+        : []),
+    ])
+  }
+
   async saveActivity(clientToken: string, activity: PileCueActivity) {
     await setDoc(
       doc(this.db, `clientJobs/${clientToken}/activity/${activity.id}`),
@@ -440,6 +461,19 @@ class LocalPileCueRepository implements PileCueRepository {
       item,
       ...items.filter((entry) => entry.id !== item.id),
     ])
+  }
+
+  async deleteItem(clientToken: string, item: PileCueItem) {
+    const items = readJson<PileCueItem[]>(itemsKey(clientToken), [])
+    const activityEntries = readJson<PileCueActivity[]>(activityKey(clientToken), [])
+    writeJson(
+      itemsKey(clientToken),
+      items.filter((entry) => entry.id !== item.id),
+    )
+    writeJson(
+      activityKey(clientToken),
+      activityEntries.filter((entry) => entry.itemId !== item.id),
+    )
   }
 
   async saveActivity(clientToken: string, activity: PileCueActivity) {

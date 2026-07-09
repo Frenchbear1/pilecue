@@ -20,6 +20,7 @@ type PileCueStore = {
   upsertJobLocal: (job: PileCueJob) => void
   removeJobLocal: (jobId: string) => void
   upsertItemLocal: (item: PileCueItem) => void
+  removeItemLocal: (itemId: string) => void
   upsertActivityLocal: (activity: PileCueActivity) => void
   setSyncState: (syncState: SyncState, syncMessage?: string) => void
   resetJob: () => void
@@ -68,6 +69,11 @@ export const usePileCueStore = create<PileCueStore>((set) => ({
   upsertItemLocal: (item) =>
     set((state) => ({
       items: [item, ...state.items.filter((entry) => entry.id !== item.id)],
+    })),
+
+  removeItemLocal: (itemId) =>
+    set((state) => ({
+      items: state.items.filter((entry) => entry.id !== itemId),
     })),
 
   upsertActivityLocal: (activity) =>
