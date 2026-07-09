@@ -766,7 +766,8 @@ function JobWorkspace({
   onToggleHandled: (item: PileCueItem) => void
   onMarkAlertsRead: () => void
 }) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const checkedItems = items.filter((item) => item.handledAt)
   const groups = useMemo(() => groupItemsByCategory(items), [items])
 
@@ -814,7 +815,8 @@ function JobWorkspace({
               <CaptureView
                 items={items}
                 uploadProgress={uploadProgress}
-                onChoose={() => fileInputRef.current?.click()}
+                onCapture={() => cameraInputRef.current?.click()}
+                onUpload={() => uploadInputRef.current?.click()}
                 onToggleHandled={onToggleHandled}
               />
             ) : null}
@@ -835,10 +837,20 @@ function JobWorkspace({
         </AnimatePresence>
       </main>
       <input
-        ref={fileInputRef}
+        ref={cameraInputRef}
         type="file"
         accept="image/*"
         capture="environment"
+        className="hidden"
+        onChange={(event) => {
+          onUpload(event.currentTarget.files)
+          event.currentTarget.value = ''
+        }}
+      />
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="image/*"
         multiple
         className="hidden"
         onChange={(event) => {
@@ -854,12 +866,14 @@ function JobWorkspace({
 function CaptureView({
   items,
   uploadProgress,
-  onChoose,
+  onCapture,
+  onUpload,
   onToggleHandled,
 }: {
   items: PileCueItem[]
   uploadProgress: Record<string, number>
-  onChoose: () => void
+  onCapture: () => void
+  onUpload: () => void
   onToggleHandled: (item: PileCueItem) => void
 }) {
   return (
@@ -876,11 +890,19 @@ function CaptureView({
         </div>
         <button
           type="button"
-          onClick={onChoose}
+          onClick={onCapture}
           className="pressable mt-5 flex w-full items-center justify-center gap-3 rounded-[24px] bg-white px-5 py-5 text-lg font-semibold text-stone-950"
         >
-          <ImagePlus size={23} />
+          <Camera size={23} />
           Capture
+        </button>
+        <button
+          type="button"
+          onClick={onUpload}
+          className="pressable mt-3 flex w-full items-center justify-center gap-3 rounded-[22px] bg-white/10 px-5 py-4 text-base font-semibold text-white ring-1 ring-white/15"
+        >
+          <ImagePlus size={21} />
+          Upload photos
         </button>
       </section>
       {items.length ? (
@@ -1324,6 +1346,7 @@ function ShareModal({
 }) {
   const [qrUrl, setQrUrl] = useState('')
   const [copied, setCopied] = useState(false)
+  const [shared, setShared] = useState(false)
   const clientUrl = job ? buildClientUrl(job.clientToken) : ''
 
   useEffect(() => {
@@ -1334,13 +1357,45 @@ function ShareModal({
 
     void QRCode.toDataURL(clientUrl, {
       margin: 1,
-      width: 320,
+      width: 240,
       color: {
         dark: '#15211d',
         light: '#ffffff',
       },
     }).then(setQrUrl)
   }, [clientUrl, open])
+
+  const copyClientUrl = async () => {
+    await copyText(clientUrl)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1200)
+  }
+
+  const shareClientUrl = async () => {
+    try {
+      if ('share' in navigator) {
+        await navigator.share({
+          title: `${job?.title ?? 'PileCue'} client link`,
+          text: 'Review and sort these cleanup photos.',
+          url: clientUrl,
+        })
+        setShared(true)
+        window.setTimeout(() => setShared(false), 1200)
+        return
+      }
+
+      await copyClientUrl()
+    } catch (shareError) {
+      if (
+        shareError instanceof DOMException &&
+        shareError.name === 'AbortError'
+      ) {
+        return
+      }
+
+      await copyClientUrl()
+    }
+  }
 
   if (!job) {
     return null
@@ -1349,11 +1404,15 @@ function ShareModal({
   return (
     <Modal open={open} title="Client link" onClose={onClose}>
       <div className="space-y-4">
-        <div className="grid place-items-center rounded-[28px] bg-white p-4 shadow-sm">
+        <div className="grid place-items-center rounded-[24px] bg-white p-3 shadow-sm">
           {qrUrl ? (
-            <img src={qrUrl} alt="Client QR code" className="size-64 rounded-2xl" />
+            <img
+              src={qrUrl}
+              alt="Client QR code"
+              className="share-qr rounded-2xl"
+            />
           ) : (
-            <div className="grid size-64 place-items-center text-stone-400">
+            <div className="share-qr grid place-items-center text-stone-400">
               <Loader2 className="animate-spin" size={30} />
             </div>
           )}
@@ -1361,19 +1420,24 @@ function ShareModal({
         <div className="rounded-2xl bg-stone-100 p-3 text-sm font-medium text-stone-600">
           <p className="truncate">{clientUrl}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void copyText(clientUrl).then(() => {
-              setCopied(true)
-              window.setTimeout(() => setCopied(false), 1200)
-            })
-          }}
-          className="pressable flex w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 py-4 text-base font-semibold text-white"
-        >
-          <Copy size={18} />
-          {copied ? 'Copied' : 'Copy link'}
-        </button>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => void copyClientUrl()}
+            className="pressable flex min-w-0 items-center justify-center gap-2 rounded-2xl bg-stone-950 px-4 py-4 text-sm font-semibold text-white"
+          >
+            <Copy size={18} />
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void shareClientUrl()}
+            className="pressable flex min-w-0 items-center justify-center gap-2 rounded-2xl bg-[var(--accent)] px-4 py-4 text-sm font-semibold text-white"
+          >
+            <Share2 size={18} />
+            {shared ? 'Shared' : 'Share'}
+          </button>
+        </div>
       </div>
     </Modal>
   )
@@ -1529,17 +1593,17 @@ function Modal({
     <AnimatePresence>
       {open ? (
         <motion.div
-          className="fixed inset-0 z-50 grid place-items-end bg-stone-950/30 p-3 backdrop-blur-sm sm:place-items-center"
+          className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-stone-950/30 px-3 py-[calc(env(safe-area-inset-top)+1rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] backdrop-blur-sm"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
           <motion.section
-            initial={{ opacity: 0, y: 24, scale: 0.98 }}
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            exit={{ opacity: 0, y: 14, scale: 0.98 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="w-full max-w-[420px] rounded-[32px] bg-[#f5f7f2] p-5 shadow-2xl"
+            className="my-auto max-h-[calc(100svh-2rem)] w-full max-w-[420px] overflow-y-auto rounded-[32px] bg-[#f5f7f2] p-5 shadow-2xl"
           >
             <div className="mb-5 flex items-center justify-between gap-3">
               <h2 className="text-2xl font-semibold text-stone-950">{title}</h2>

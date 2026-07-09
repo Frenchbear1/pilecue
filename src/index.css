@@ -85,3 +85,8 @@ select {
 .pressable:active {
   transform: scale(0.97);
 }
+
+.share-qr {
+  width: min(14rem, calc(100vw - 5.5rem));
+  height: min(14rem, calc(100vw - 5.5rem));
+}
