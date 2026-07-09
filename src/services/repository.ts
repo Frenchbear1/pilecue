@@ -147,6 +147,8 @@ function getLocalJobSnapshot(clientToken: string): JobSnapshot {
 }
 
 class FirestorePileCueRepository implements PileCueRepository {
+  private useInlinePhotos = false
+
   constructor(
     private readonly db: Firestore,
     private readonly storage: FirebaseStorage,
@@ -319,25 +321,35 @@ class FirestorePileCueRepository implements PileCueRepository {
     thumbnailBlob: Blob,
     onProgress: (progress: number) => void,
   ) {
-    const basePath = `jobPhotos/${workerId}/${jobId}/${itemId}`
-    const [photoUrl, thumbnailUrl] = await Promise.all([
-      uploadBlobWithProgress(
-        ref(this.storage, `${basePath}.jpg`),
-        photoBlob,
-        (progress) => onProgress(Math.round(progress * 0.82)),
-      ),
-      uploadBlobWithProgress(
-        ref(this.storage, `${basePath}_thumb.jpg`),
-        thumbnailBlob,
-        (progress) => onProgress(82 + Math.round(progress * 18)),
-      ),
-    ])
-    onProgress(100)
+    if (this.useInlinePhotos) {
+      return inlinePhotoUpload(thumbnailBlob, onProgress)
+    }
 
-    return {
-      photoUrl,
-      thumbnailUrl,
-      storagePath: basePath,
+    const basePath = `jobPhotos/${workerId}/${jobId}/${itemId}`
+
+    try {
+      const [photoUrl, thumbnailUrl] = await Promise.all([
+        uploadBlobWithProgress(
+          ref(this.storage, `${basePath}.jpg`),
+          photoBlob,
+          (progress) => onProgress(Math.round(progress * 0.82)),
+        ),
+        uploadBlobWithProgress(
+          ref(this.storage, `${basePath}_thumb.jpg`),
+          thumbnailBlob,
+          (progress) => onProgress(82 + Math.round(progress * 18)),
+        ),
+      ])
+      onProgress(100)
+
+      return {
+        photoUrl,
+        thumbnailUrl,
+        storagePath: basePath,
+      }
+    } catch {
+      this.useInlinePhotos = true
+      return inlinePhotoUpload(thumbnailBlob, onProgress)
     }
   }
 }
@@ -495,6 +507,21 @@ async function deleteStorageObject(storage: FirebaseStorage, path: string) {
     await deleteObject(ref(storage, path))
   } catch {
     // If the file is already gone, Firestore cleanup should still complete.
+  }
+}
+
+async function inlinePhotoUpload(
+  thumbnailBlob: Blob,
+  onProgress: (progress: number) => void,
+): Promise<PhotoUploadResult> {
+  onProgress(92)
+  const imageUrl = await blobToDataUrl(thumbnailBlob)
+  onProgress(100)
+
+  return {
+    photoUrl: imageUrl,
+    thumbnailUrl: imageUrl,
+    storagePath: null,
   }
 }
 
