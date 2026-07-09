@@ -1,0 +1,40 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /jobs/{jobId} {
+      allow create: if signedIn() && request.resource.data.workerId == request.auth.uid;
+      allow read, update, delete: if signedIn() && resource.data.workerId == request.auth.uid;
+    }
+
+    match /clientJobs/{clientToken} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if signedIn();
+
+      match /items/{itemId} {
+        allow read: if true;
+        allow create, delete: if signedIn();
+        allow update: if signedIn()
+          || request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'category',
+            'clientNote',
+            'lastClientChangeAt',
+            'needsWorkerReview',
+            'updatedAt'
+          ]);
+      }
+
+      match /activity/{activityId} {
+        allow read: if true;
+        allow create: if signedIn()
+          || request.resource.data.type == 'client_changed_after_handled';
+        allow update, delete: if signedIn();
+      }
+    }
+  }
+}
