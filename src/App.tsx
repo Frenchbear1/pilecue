@@ -135,6 +135,8 @@ function WorkerApp() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [view, setView] = useState<WorkerView>('capture')
   const [newJobOpen, setNewJobOpen] = useState(false)
+  const [isCreatingJob, setIsCreatingJob] = useState(false)
+  const [jobCreateError, setJobCreateError] = useState('')
   const [shareOpen, setShareOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({})
@@ -188,6 +190,9 @@ function WorkerApp() {
       return
     }
 
+    setIsCreatingJob(true)
+    setJobCreateError('')
+
     const timestamp = nowIso()
     const job: PileCueJob = {
       id: createId('job'),
@@ -199,18 +204,22 @@ function WorkerApp() {
       updatedAt: timestamp,
     }
 
-    upsertJobLocal(job)
-    setSelectedJobId(job.id)
-    setView('capture')
-    setNewJobOpen(false)
-
     try {
       await repository.saveJob(job)
+      upsertJobLocal(job)
+      setSelectedJobId(job.id)
+      setView('capture')
+      setNewJobOpen(false)
     } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : 'Could not save job.'
+      setJobCreateError(message)
       setSyncState(
         'error',
-        saveError instanceof Error ? saveError.message : 'Could not save job.',
+        message,
       )
+    } finally {
+      setIsCreatingJob(false)
     }
   }
 
@@ -443,6 +452,8 @@ function WorkerApp() {
         <NewJobModal
           open={newJobOpen}
           onClose={() => setNewJobOpen(false)}
+          isSaving={isCreatingJob}
+          error={jobCreateError}
           onSubmit={(title) => void createJob(title)}
         />
         <ShareModal
@@ -1343,10 +1354,14 @@ function BottomNav({
 function NewJobModal({
   open,
   onClose,
+  isSaving,
+  error,
   onSubmit,
 }: {
   open: boolean
   onClose: () => void
+  isSaving: boolean
+  error: string
   onSubmit: (title: string) => void
 }) {
   const [title, setTitle] = useState('')
@@ -1372,15 +1387,21 @@ function NewJobModal({
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Garage cleanout"
-            autoFocus
+            enterKeyHint="done"
           />
         </label>
+        {error ? (
+          <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </p>
+        ) : null}
         <button
           type="submit"
-          className="pressable flex w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 py-4 text-base font-semibold text-white"
+          disabled={isSaving}
+          className="pressable flex w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 py-4 text-base font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Plus size={19} />
-          Create
+          {isSaving ? <Loader2 className="animate-spin" size={19} /> : <Plus size={19} />}
+          {isSaving ? 'Saving' : 'Create'}
         </button>
       </form>
     </Modal>
@@ -1641,11 +1662,20 @@ function Modal({
   children: ReactNode
   onClose: () => void
 }) {
+  const keyboardInset = useKeyboardInset(open)
+
   return (
     <AnimatePresence>
       {open ? (
         <motion.div
-          className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-stone-950/30 px-3 py-[calc(env(safe-area-inset-top)+1rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] backdrop-blur-sm"
+          className={clsx(
+            'fixed inset-0 z-50 grid overflow-y-auto bg-stone-950/30 px-3 backdrop-blur-sm',
+            keyboardInset > 0 ? 'place-items-start' : 'place-items-center',
+          )}
+          style={{
+            paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
+            paddingBottom: `calc(env(safe-area-inset-bottom) + 1rem + ${keyboardInset}px)`,
+          }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -1655,7 +1685,16 @@ function Modal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 14, scale: 0.98 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="my-auto max-h-[calc(100svh-2rem)] w-full max-w-[420px] overflow-y-auto rounded-[32px] bg-[#f5f7f2] p-5 shadow-2xl"
+            className={clsx(
+              'w-full max-w-[420px] overflow-y-auto rounded-[32px] bg-[#f5f7f2] p-5 shadow-2xl',
+              keyboardInset > 0 ? 'mt-4' : 'my-auto',
+            )}
+            style={{
+              maxHeight:
+                keyboardInset > 0
+                  ? `calc(100vh - ${keyboardInset}px - 2rem)`
+                  : 'calc(100svh - 2rem)',
+            }}
           >
             <div className="mb-5 flex items-center justify-between gap-3">
               <h2 className="text-2xl font-semibold text-stone-950">{title}</h2>
@@ -1669,6 +1708,42 @@ function Modal({
       ) : null}
     </AnimatePresence>
   )
+}
+
+function useKeyboardInset(enabled: boolean) {
+  const [keyboardInset, setKeyboardInset] = useState(0)
+
+  useEffect(() => {
+    if (!enabled) {
+      setKeyboardInset(0)
+      return
+    }
+
+    const viewport = window.visualViewport
+    const update = () => {
+      if (!viewport) {
+        setKeyboardInset(0)
+        return
+      }
+
+      setKeyboardInset(
+        Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)),
+      )
+    }
+
+    update()
+    viewport?.addEventListener('resize', update)
+    viewport?.addEventListener('scroll', update)
+    window.addEventListener('resize', update)
+
+    return () => {
+      viewport?.removeEventListener('resize', update)
+      viewport?.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [enabled])
+
+  return keyboardInset
 }
 
 function AuthScreen({

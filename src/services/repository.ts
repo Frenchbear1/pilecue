@@ -8,11 +8,13 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type Firestore,
   type Unsubscribe,
 } from 'firebase/firestore'
 import {
   getDownloadURL,
+  deleteObject,
   ref,
   uploadBytesResumable,
   type FirebaseStorage,
@@ -250,10 +252,10 @@ class FirestorePileCueRepository implements PileCueRepository {
   }
 
   async saveJob(job: PileCueJob) {
-    await Promise.all([
-      setDoc(doc(this.db, `jobs/${job.id}`), job),
-      setDoc(doc(this.db, `clientJobs/${job.clientToken}`), publicJobFromJob(job)),
-    ])
+    const batch = writeBatch(this.db)
+    batch.set(doc(this.db, `jobs/${job.id}`), job)
+    batch.set(doc(this.db, `clientJobs/${job.clientToken}`), publicJobFromJob(job))
+    await batch.commit()
   }
 
   async deleteJob(job: PileCueJob) {
@@ -263,10 +265,19 @@ class FirestorePileCueRepository implements PileCueRepository {
     const activitySnapshot = await getDocs(
       collection(this.db, `clientJobs/${job.clientToken}/activity`),
     )
+    const itemData = itemsSnapshot.docs.map((entry) => entry.data() as PileCueItem)
 
     await Promise.all([
       ...itemsSnapshot.docs.map((entry) => deleteDoc(entry.ref)),
       ...activitySnapshot.docs.map((entry) => deleteDoc(entry.ref)),
+      ...itemData.flatMap((item) =>
+        item.storagePath
+          ? [
+              deleteStorageObject(this.storage, `${item.storagePath}.jpg`),
+              deleteStorageObject(this.storage, `${item.storagePath}_thumb.jpg`),
+            ]
+          : [],
+      ),
     ])
 
     await Promise.all([
@@ -476,6 +487,14 @@ class LocalPileCueRepository implements PileCueRepository {
       thumbnailUrl,
       storagePath: null,
     }
+  }
+}
+
+async function deleteStorageObject(storage: FirebaseStorage, path: string) {
+  try {
+    await deleteObject(ref(storage, path))
+  } catch {
+    // If the file is already gone, Firestore cleanup should still complete.
   }
 }
 
