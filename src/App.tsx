@@ -587,7 +587,8 @@ function ClientApp({ clientToken }: { clientToken: string }) {
           </div>
           <h1 className="mt-4 text-2xl font-semibold text-stone-950">Link unavailable</h1>
           <p className="mt-2 text-sm leading-6 text-stone-500">
-            {syncMessage || 'This PileCue job link is not active.'}
+            {syncMessage ||
+              'No Cloud Firestore job was found for this QR link. Realtime Database is not used by PileCue.'}
           </p>
         </section>
       </main>
@@ -1365,10 +1366,12 @@ function NewJobModal({
   onSubmit: (title: string) => void
 }) {
   const [title, setTitle] = useState('')
+  const titleInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (open) {
       setTitle('')
+      window.setTimeout(() => titleInputRef.current?.focus(), 220)
     }
   }, [open])
 
@@ -1383,6 +1386,7 @@ function NewJobModal({
         <label className={labelClass}>
           Job name
           <input
+            ref={titleInputRef}
             className={inputClass}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
