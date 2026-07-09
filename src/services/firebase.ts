@@ -1,10 +1,12 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
 import {
   browserLocalPersistence,
+  createUserWithEmailAndPassword,
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut as firebaseSignOut,
@@ -107,6 +109,28 @@ export async function signInWithGoogle() {
   }
 
   await signInWithRedirect(firebase.auth, provider)
+}
+
+export async function signInWithEmail(email: string, password: string) {
+  const firebase = getFirebaseServices()
+
+  if (!firebase) {
+    throw new Error('Firebase is not configured yet.')
+  }
+
+  await prepareAuthPersistence()
+  await signInWithEmailAndPassword(firebase.auth, email.trim(), password)
+}
+
+export async function createAccountWithEmail(email: string, password: string) {
+  const firebase = getFirebaseServices()
+
+  if (!firebase) {
+    throw new Error('Firebase is not configured yet.')
+  }
+
+  await prepareAuthPersistence()
+  await createUserWithEmailAndPassword(firebase.auth, email.trim(), password)
 }
 
 export async function signOutOfFirebase() {

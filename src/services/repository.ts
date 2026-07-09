@@ -1,6 +1,8 @@
 import {
   collection,
+  deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   query,
   setDoc,
@@ -48,6 +50,7 @@ export type PileCueRepository = {
     onError: (message: string) => void,
   ) => Unsubscribe
   saveJob: (job: PileCueJob) => Promise<void>
+  deleteJob: (job: PileCueJob) => Promise<void>
   saveItem: (clientToken: string, item: PileCueItem) => Promise<void>
   saveActivity: (clientToken: string, activity: PileCueActivity) => Promise<void>
   saveActivities: (clientToken: string, activity: PileCueActivity[]) => Promise<void>
@@ -125,6 +128,11 @@ function readJson<T>(key: string, fallback: T): T {
 
 function writeJson(key: string, value: unknown) {
   window.localStorage.setItem(key, JSON.stringify(value))
+  window.dispatchEvent(new CustomEvent(localEventName))
+}
+
+function removeJson(key: string) {
+  window.localStorage.removeItem(key)
   window.dispatchEvent(new CustomEvent(localEventName))
 }
 
@@ -245,6 +253,25 @@ class FirestorePileCueRepository implements PileCueRepository {
     await Promise.all([
       setDoc(doc(this.db, `jobs/${job.id}`), job),
       setDoc(doc(this.db, `clientJobs/${job.clientToken}`), publicJobFromJob(job)),
+    ])
+  }
+
+  async deleteJob(job: PileCueJob) {
+    const itemsSnapshot = await getDocs(
+      collection(this.db, `clientJobs/${job.clientToken}/items`),
+    )
+    const activitySnapshot = await getDocs(
+      collection(this.db, `clientJobs/${job.clientToken}/activity`),
+    )
+
+    await Promise.all([
+      ...itemsSnapshot.docs.map((entry) => deleteDoc(entry.ref)),
+      ...activitySnapshot.docs.map((entry) => deleteDoc(entry.ref)),
+    ])
+
+    await Promise.all([
+      deleteDoc(doc(this.db, `clientJobs/${job.clientToken}`)),
+      deleteDoc(doc(this.db, `jobs/${job.id}`)),
     ])
   }
 
@@ -383,6 +410,17 @@ class LocalPileCueRepository implements PileCueRepository {
     const jobs = readJson<PileCueJob[]>(jobsKey, [])
     writeJson(jobsKey, [job, ...jobs.filter((entry) => entry.id !== job.id)])
     writeJson(clientJobKey(job.clientToken), publicJobFromJob(job))
+  }
+
+  async deleteJob(job: PileCueJob) {
+    const jobs = readJson<PileCueJob[]>(jobsKey, [])
+    writeJson(
+      jobsKey,
+      jobs.filter((entry) => entry.id !== job.id),
+    )
+    removeJson(clientJobKey(job.clientToken))
+    removeJson(itemsKey(job.clientToken))
+    removeJson(activityKey(job.clientToken))
   }
 
   async saveItem(clientToken: string, item: PileCueItem) {

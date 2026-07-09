@@ -18,6 +18,7 @@ type PileCueStore = {
   setJobs: (jobs: PileCueJob[]) => void
   setJobSnapshot: (snapshot: JobSnapshot) => void
   upsertJobLocal: (job: PileCueJob) => void
+  removeJobLocal: (jobId: string) => void
   upsertItemLocal: (item: PileCueItem) => void
   upsertActivityLocal: (activity: PileCueActivity) => void
   setSyncState: (syncState: SyncState, syncMessage?: string) => void
@@ -54,6 +55,14 @@ export const usePileCueStore = create<PileCueStore>((set) => ({
     set((state) => ({
       jobs: [job, ...state.jobs.filter((entry) => entry.id !== job.id)],
       activeJob: state.activeJob?.id === job.id ? job : state.activeJob,
+    })),
+
+  removeJobLocal: (jobId) =>
+    set((state) => ({
+      jobs: state.jobs.filter((entry) => entry.id !== jobId),
+      activeJob: state.activeJob?.id === jobId ? null : state.activeJob,
+      items: state.activeJob?.id === jobId ? [] : state.items,
+      activity: state.activeJob?.id === jobId ? [] : state.activity,
     })),
 
   upsertItemLocal: (item) =>

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { SessionUser } from '../types'
 import {
+  createAccountWithEmail,
   isFirebaseConfigured,
+  signInWithEmail,
   signInWithGoogle,
   signOutOfFirebase,
   watchFirebaseUser,
@@ -62,6 +64,36 @@ export function useAuthSession() {
     }
   }
 
+  const signInEmail = async (email: string, password: string) => {
+    setError('')
+
+    if (!isFirebaseConfigured) {
+      setSession(previewUser)
+      return
+    }
+
+    try {
+      await signInWithEmail(email, password)
+    } catch (signInError) {
+      setError(formatAuthError(signInError, 'Could not sign in.'))
+    }
+  }
+
+  const createEmailAccount = async (email: string, password: string) => {
+    setError('')
+
+    if (!isFirebaseConfigured) {
+      setSession(previewUser)
+      return
+    }
+
+    try {
+      await createAccountWithEmail(email, password)
+    } catch (createError) {
+      setError(formatAuthError(createError, 'Could not create account.'))
+    }
+  }
+
   const signOut = async () => {
     setError('')
 
@@ -87,6 +119,35 @@ export function useAuthSession() {
     error,
     isFirebaseConfigured,
     signIn,
+    signInEmail,
+    createEmailAccount,
     signOut,
   }
+}
+
+function formatAuthError(error: unknown, fallback: string) {
+  const code =
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+      ? error.code
+      : ''
+
+  const messages: Record<string, string> = {
+    'auth/email-already-in-use': 'That email already has an account.',
+    'auth/invalid-credential': 'Email or password is incorrect.',
+    'auth/invalid-email': 'Enter a valid email address.',
+    'auth/missing-password': 'Enter a password.',
+    'auth/weak-password': 'Use at least 6 characters for the password.',
+    'auth/user-disabled': 'This account has been disabled.',
+    'auth/user-not-found': 'No account was found for that email.',
+    'auth/wrong-password': 'Email or password is incorrect.',
+  }
+
+  if (messages[code]) {
+    return messages[code]
+  }
+
+  return error instanceof Error ? error.message : fallback
 }

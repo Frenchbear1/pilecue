@@ -15,6 +15,7 @@ import {
   Link as LinkIcon,
   Loader2,
   LogOut,
+  Mail,
   MapPin,
   MessageSquareText,
   PackageCheck,
@@ -105,8 +106,16 @@ function App() {
 }
 
 function WorkerApp() {
-  const { session, isReady, error, isFirebaseConfigured, signIn, signOut } =
-    useAuthSession()
+  const {
+    session,
+    isReady,
+    error,
+    isFirebaseConfigured,
+    signIn,
+    signInEmail,
+    createEmailAccount,
+    signOut,
+  } = useAuthSession()
   const repository = useMemo(() => createPileCueRepository(), [])
   const jobs = usePileCueStore((state) => state.jobs)
   const activeJob = usePileCueStore((state) => state.activeJob)
@@ -117,6 +126,7 @@ function WorkerApp() {
   const setJobs = usePileCueStore((state) => state.setJobs)
   const setJobSnapshot = usePileCueStore((state) => state.setJobSnapshot)
   const upsertJobLocal = usePileCueStore((state) => state.upsertJobLocal)
+  const removeJobLocal = usePileCueStore((state) => state.removeJobLocal)
   const upsertItemLocal = usePileCueStore((state) => state.upsertItemLocal)
   const upsertActivityLocal = usePileCueStore((state) => state.upsertActivityLocal)
   const setSyncState = usePileCueStore((state) => state.setSyncState)
@@ -200,6 +210,31 @@ function WorkerApp() {
       setSyncState(
         'error',
         saveError instanceof Error ? saveError.message : 'Could not save job.',
+      )
+    }
+  }
+
+  const deleteJob = async (job: PileCueJob) => {
+    const confirmed = window.confirm(`Delete "${job.title}"? This removes the client link and all photos from this job.`)
+
+    if (!confirmed) {
+      return
+    }
+
+    removeJobLocal(job.id)
+
+    if (selectedJobId === job.id) {
+      setSelectedJobId(null)
+      setView('capture')
+    }
+
+    try {
+      await repository.deleteJob(job)
+    } catch (deleteError) {
+      upsertJobLocal(job)
+      setSyncState(
+        'error',
+        deleteError instanceof Error ? deleteError.message : 'Could not delete job.',
       )
     }
   }
@@ -357,14 +392,18 @@ function WorkerApp() {
       <AuthScreen
         error={error}
         isConfigured={isFirebaseConfigured}
-        onSignIn={() => void signIn()}
+        onGoogleSignIn={() => void signIn()}
+        onEmailSignIn={(email, password) => void signInEmail(email, password)}
+        onEmailSignUp={(email, password) =>
+          void createEmailAccount(email, password)
+        }
       />
     )
   }
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-svh bg-stone-300 text-stone-950">
+      <div className="min-h-svh bg-[#f5f7f2] text-stone-950">
         <div className="pilecue-shell mx-auto min-h-svh max-w-[430px] shadow-2xl sm:max-w-[760px] lg:max-w-[1100px]">
           {!selectedJob ? (
             <JobListScreen
@@ -377,6 +416,7 @@ function WorkerApp() {
                 setSelectedJobId(job.id)
                 setView('capture')
               }}
+              onDelete={(job) => void deleteJob(job)}
               onSignOut={() => void signOut()}
             />
           ) : (
@@ -545,7 +585,7 @@ function ClientApp({ clientToken }: { clientToken: string }) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <main className="min-h-svh bg-[#d9ded8] text-stone-950">
+      <main className="min-h-svh bg-[#f5f7f2] text-stone-950">
         <div className="mx-auto min-h-svh max-w-[1180px] bg-[#f5f7f2]">
           <header className="glass-sticky sticky top-0 z-30 border-b border-stone-200/80 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+14px)] lg:px-8">
             <div className="flex items-center justify-between gap-4">
@@ -642,6 +682,7 @@ function JobListScreen({
   syncMessage,
   onCreate,
   onOpen,
+  onDelete,
   onSignOut,
 }: {
   jobs: PileCueJob[]
@@ -650,6 +691,7 @@ function JobListScreen({
   syncMessage: string
   onCreate: () => void
   onOpen: (job: PileCueJob) => void
+  onDelete: (job: PileCueJob) => void
   onSignOut: () => void
 }) {
   return (
@@ -702,26 +744,36 @@ function JobListScreen({
           {jobs.length ? (
             <div className="grid gap-3 md:grid-cols-2">
               {jobs.map((job) => (
-                <button
+                <article
                   key={job.id}
-                  type="button"
-                  onClick={() => onOpen(job)}
-                  className="pressable rounded-[28px] border border-white bg-white p-4 text-left shadow-sm"
+                  className="rounded-[28px] border border-white bg-white p-4 shadow-sm"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(job)}
+                      className="pressable min-w-0 flex-1 rounded-2xl text-left"
+                    >
                       <h3 className="truncate text-xl font-semibold text-stone-950">
                         {job.title}
                       </h3>
                       <p className="mt-1 text-sm text-stone-500">
                         {formatDate(job.updatedAt)}
                       </p>
-                    </div>
+                    </button>
                     <div className="grid size-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
                       <ClipboardCheck size={23} />
                     </div>
+                    <button
+                      type="button"
+                      title="Delete job"
+                      onClick={() => onDelete(job)}
+                      className="pressable grid size-12 place-items-center rounded-2xl bg-red-50 text-red-700"
+                    >
+                      <Trash2 size={20} />
+                    </button>
                   </div>
-                </button>
+                </article>
               ))}
             </div>
           ) : (
@@ -1622,14 +1674,50 @@ function Modal({
 function AuthScreen({
   error,
   isConfigured,
-  onSignIn,
+  onGoogleSignIn,
+  onEmailSignIn,
+  onEmailSignUp,
 }: {
   error: string
   isConfigured: boolean
-  onSignIn: () => void
+  onGoogleSignIn: () => void
+  onEmailSignIn: (email: string, password: string) => void
+  onEmailSignUp: (email: string, password: string) => void
 }) {
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [localError, setLocalError] = useState('')
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    setLocalError('')
+
+    if (!email.trim()) {
+      setLocalError('Enter your email address.')
+      return
+    }
+
+    if (!password) {
+      setLocalError('Enter your password.')
+      return
+    }
+
+    if (mode === 'sign-up' && password.length < 6) {
+      setLocalError('Use at least 6 characters for the password.')
+      return
+    }
+
+    if (mode === 'sign-in') {
+      onEmailSignIn(email, password)
+      return
+    }
+
+    onEmailSignUp(email, password)
+  }
+
   return (
-    <main className="grid min-h-svh place-items-center bg-[#f5f7f2] px-5">
+    <main className="grid min-h-svh place-items-center bg-[#f5f7f2] px-5 py-[calc(env(safe-area-inset-top)+1rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)]">
       <section className="w-full max-w-[420px] rounded-[32px] border border-white bg-white p-6 shadow-2xl">
         <div className="mb-8 flex items-center gap-3">
           <div className="grid size-14 place-items-center rounded-3xl bg-stone-950 text-white">
@@ -1644,15 +1732,82 @@ function AuthScreen({
         </div>
         <button
           type="button"
-          onClick={onSignIn}
+          onClick={onGoogleSignIn}
           className="pressable flex w-full items-center justify-center gap-3 rounded-2xl bg-stone-950 px-5 py-4 text-base font-semibold text-white shadow-lg"
         >
           <UserRound size={20} />
           {isConfigured ? 'Continue with Google' : 'Open preview'}
         </button>
-        {error ? (
+
+        {isConfigured ? (
+          <>
+            <div className="my-5 flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
+              <span className="h-px flex-1 bg-stone-200" />
+              Email
+              <span className="h-px flex-1 bg-stone-200" />
+            </div>
+            <div className="mb-4 grid grid-cols-2 gap-1 rounded-2xl bg-stone-100 p-1">
+              {[
+                { id: 'sign-in', label: 'Log in' },
+                { id: 'sign-up', label: 'Create' },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    setMode(option.id as 'sign-in' | 'sign-up')
+                    setLocalError('')
+                  }}
+                  className={clsx(
+                    'pressable rounded-xl px-3 py-2 text-sm font-semibold',
+                    mode === option.id
+                      ? 'bg-white text-stone-950 shadow-sm'
+                      : 'text-stone-500',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <form className="space-y-3" onSubmit={submit}>
+              <label className={labelClass}>
+                Email
+                <input
+                  className={inputClass}
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                />
+              </label>
+              <label className={labelClass}>
+                Password
+                <input
+                  className={inputClass}
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder={mode === 'sign-up' ? 'At least 6 characters' : 'Password'}
+                  autoComplete={
+                    mode === 'sign-up' ? 'new-password' : 'current-password'
+                  }
+                />
+              </label>
+              <button
+                type="submit"
+                className="pressable flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--accent)] px-5 py-4 text-base font-semibold text-white shadow-lg"
+              >
+                <Mail size={19} />
+                {mode === 'sign-in' ? 'Log in with email' : 'Create account'}
+              </button>
+            </form>
+          </>
+        ) : null}
+
+        {localError || error ? (
           <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+            {localError || error}
           </p>
         ) : null}
       </section>
